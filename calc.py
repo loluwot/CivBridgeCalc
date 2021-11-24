@@ -21,19 +21,20 @@ class CrossSection: #assuming can be simplified to horizontally symmetric group 
         Isects = list(map(lambda x, y: x*y**3/12, self.bases, self.lengths))
         Iadj = list(map(lambda a, c: a*(self.ybar - c)**2, self.areas, self.centroids))
         self.I = sum(Isects) + sum(Iadj)
-        self.Q = list(map(lambda a, c: a*c, self.areas, self.centroids))
+        # self.Q = list(map(lambda a, c: a*c, self.areas, self.centroids))
 
     def get_Qy(self, y1): #y0 assumed to be bottom 
         idx = bisect_left(self.endings, y1)
+        # print(idx)
         new_section = CrossSection(self.lengths[:idx] + [self.lengths[idx] - (self.endings[idx] - y1)], self.bases[:idx+1])
         # print(new_section.lengths)
-        # print(new_section.Q)
-        return sum(new_section.Q)
+        # print(list(map(lambda a, c: a*(c - self.ybar), new_section.areas, new_section.centroids)))
+        return sum(list(map(lambda a, c: a*(c - self.ybar), new_section.areas, new_section.centroids)))
+        # return sum(new_section.Q)
     
     def get_shear_per_force(self, y1):
         idx = bisect_left(self.endings, y1)
         return self.get_Qy(y1)/self.bases[idx]/self.I
-        pass
 class Bridge: #Constant x thickness, non constant y thickness hollow member
     def __init__(self, cross, L, applied_loads, reaction_locs) -> None: #assume 2 reaction locations
         self.L = L
@@ -44,6 +45,7 @@ class Bridge: #Constant x thickness, non constant y thickness hollow member
         rxn2 = moments/(self.reaction_locs[1] - self.reaction_locs[0])
         self.reaction_forces = [sum([x[1] for x in self.applied_loads]) - rxn2, rxn2]
         self.reaction_loads = list(zip(self.reaction_locs, self.reaction_forces))
+
     def shear_stress(self, y, L):
         all_loads = self.applied_loads + self.reaction_loads
         all_loads = sorted(all_loads, key=lambda x: x[0])
@@ -53,14 +55,15 @@ class Bridge: #Constant x thickness, non constant y thickness hollow member
         V = nforces[location]
         return self.cross.get_shear_per_force(y)*V
 
-A = CrossSection([100-1.27,1.27, 1.27*2], [2*1.27, 20,120])
+A = CrossSection([1.27, 100-1.27, 1.27], [80, 2*1.27, 120])
 print(A.I)
 print(A.ybar)
-bridge_test = Bridge(A, 550+510+190, [(550, 100), (550+510+190, 100)], [0, 550+510])
-xdata = np.linspace(0, 75 - 1.27, num=1000)
+bridge_test = Bridge(A, (50+150+400)*2, [(50, 100/2), (50+150+400, 100), ((50+150+400)*2 - 50, 100/2)], [200, (50+150+400)*2 - 200])
+print(bridge_test.reaction_loads)
+xdata = np.linspace(0, 100 + 1.27, num=1000)
 ydata = []
 for X in xdata:
     # print(bridge_test.shear_stress(75 - 1.27, L))
-    ydata.append(bridge_test.shear_stress(X, (550+510+190)/3))
+    ydata.append(A.get_Qy(X))
 plt.plot(xdata, ydata)
 plt.show()
