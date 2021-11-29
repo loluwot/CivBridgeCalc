@@ -9,6 +9,7 @@ import math
 from matplotlib .patches import Rectangle 
 import matplotlib .patches as mpat 
 from matplotlib .patches import FancyArrowPatch ,Polygon
+import matplotlib.animation as animation
 
 
 from sympy import *
@@ -241,9 +242,9 @@ class Bridge :#Constant x thickness, non constant y thickness hollow member
         BMD_plot =self .bmd ()
         # print(BMD_plot)
         xdata ,ydata =zip (*BMD_plot )
-        plt .plot (xdata ,ydata, label='BMD')
+        artist, = plt .gca().plot (xdata ,ydata, label='BMD')
         # plt .show ()
-
+        return artist
     def curvature (self ):
         bm =self .bmd ()
         return list (map (lambda x :(x [0 ],x [1 ]/self .material .E /self .cross .get_cross (x [0 ]).I *Decimal ('1000')),bm ))
@@ -378,19 +379,21 @@ class Bridge :#Constant x thickness, non constant y thickness hollow member
             plt.plot(xax, yax, label=labs)
             # plt.plot(xaxis, yax, label=labs)
         fix_legend(['SFD'] + res)
+        plt.xlabel('Location on Bridge (mm)')
+        plt.ylabel('Shear force (N)')
         plt.gca().legend()
         
 
     def plot_annotated_bmd(self):
-        self.plot_bmd()
+        artists = [self.plot_bmd()]
         xaxis, _ = zip(*self.bmd())
         xaxis = list(xaxis)
         xaxis2, _ = zip(*self.sfd())
         xaxis += xaxis2
         xaxis += self.diaphragms + self.cross.starting
         xaxis += list(map(Decimal, np.linspace(0, float(self.L), num=100)))
-        xaxis = sorted(xaxis)
-        yaxes = [[] for _ in range(3)]
+        xaxis = sorted(set(xaxis))
+        yaxes = [[] for _ in range(4)]
         res = ['Tension Failure', 'Compression Failure', 'Plate Buckling Failure']
 
         for x in xaxis:
@@ -399,7 +402,7 @@ class Bridge :#Constant x thickness, non constant y thickness hollow member
                 # print(f'MAX {R}', V)
                 ys.append(V)
             yaxes = [a + [b] for a, b in zip(yaxes, ys)]
-        
+        # artists = []
         for yax, labs in zip(yaxes, res):
             net_loads = list(zip(xaxis, yax))
             new_plot =[(net_loads [i ][0 ],net_loads [i -1 ][1 ])for i in range (1 ,len (net_loads ))]
@@ -407,13 +410,18 @@ class Bridge :#Constant x thickness, non constant y thickness hollow member
             interlaced[::2] = net_loads
             interlaced[1::2] = new_plot
             xax, yax = zip(*interlaced)
-            plt.plot(xax, yax, label=labs)
-        fix_legend(['BMD'] + res)
-        plt.gca().legend()
+            artist, = plt.gca().plot(xax, yax, label=labs)
+            artists.append(artist)
 
+        fix_legend(['BMD'] + res)
+        plt.xlabel('Location on Bridge (mm)')
+        plt.ylabel('Moment (Nmm)')
+        plt.gca().legend()
+        return artists
 
     def max_bending_moments(self, x, use_cross=False, idx=None):
         S = int(sign(self.get_moment(x)))
+        # print(S)
         cross = self.cross.crosses[idx] if use_cross else self.cross.get_cross(x)
         y_opts = [cross.ybar - sum(cross.lengths), cross.ybar]
         # print(y_opts)
@@ -421,11 +429,15 @@ class Bridge :#Constant x thickness, non constant y thickness hollow member
         #tension failure
         y = y_opts[(S + 1)//2]
         maxes.append(self.material.max_tension_stress*cross.I/y)
+        # print(maxes[0], cross.I, y)
         #compression failure
         y = y_opts[(1 - S)//2]
+        # print(y)
         maxes.append(self.material.max_compression_stress*cross.I/y)
+        
         #flexural buckling failure
-        maxes.append(min([self.plate_buckling(x)*cross.I/y1 for y1 in y_opts], key=abs))
+        maxes.append(-self.plate_buckling(x)*cross.I/y)
+        # print('MOMENTS', maxes)
         return maxes
 
     def bridge_capacity(self):
@@ -449,13 +461,17 @@ class Bridge :#Constant x thickness, non constant y thickness hollow member
         momentP = math.inf if M1 == 0 else sign(M1)*min(map(abs, filter(lambda V: sign(V) == sign(M1), self.max_bending_moments(x))))/M1
         # print('SHEAR ----', shearP, 'MOMENT', momentP)
         
-        return min(shearP, momentP)
+        return min(abs(shearP), abs(momentP))
 
     def failure_force (self):
-        test_points = set([v[0] for v in self.sfd()] + [v[0] for v in self.bmd()] + self.cross.starting + self.diaphragms)
-        # test_points = map(Decimal, np.linspace(0, float(self.L), num=200))
+        test_points = list(set([v[0] for v in self.sfd()] + [v[0] for v in self.bmd()] + self.cross.starting + self.diaphragms))
+        test_points += list(map(Decimal, np.linspace(0, float(self.L), num=200)))
+        test_points = sorted(test_points)
         all_fails = list(map(self.failure_force_at_x, test_points))
-        # print(min(all_fails))
+        # plt.plot(test_points, all_fails)
+        # plt.show()
+        # print(all_fails)
+        # self.plot_bmd()
         return min(all_fails)
         # print('l', all_fails_l)
         #         return min(all_fails)[0]
@@ -499,15 +515,17 @@ class BridgeTester:
         
     
     def get_failure_load(self, bridge):
-        bridge.applied_loads = [(550, -1), (550 + 510 + 190, -1)]
+        bridge.applied_loads = [(550, -1), (1250, -1)]
         bridge.initialize()
         return bridge.failure_force()
     
     def trainFOS(self, bridge):
         LBridge = bridge.L
         LTrain = Decimal((52 + 176 + 164 + 176/2)*2)
-        train_loadings = list(map(Decimal, np.linspace(-float(LTrain), float(LBridge), num=200)))
+        train_loadings = list(map(Decimal, np.linspace(-float(LTrain), float(LBridge), num=50)))
         fail_loads = []
+    
+        artists = []
         for x in (train_loadings):
             # print(x)
             percentage_of_train = min(lerp(x+52, 1, x + LTrain - 52, 0, 0), lerp(x+52, 0, x+LTrain - 52, 1, LBridge))
@@ -517,19 +535,29 @@ class BridgeTester:
             elif percentage_of_train < a:
                 percentage_of_train = 0
             # print(percentage_of_train)
-            P = Decimal('0.1666667')
+            
+            P = Decimal('1')/6
             loading = [(52+x, -P), (52 + 176+x, -P), (52 + 176 + 164+x, -P), (52 + 176 + 164 + 176+x, -P), (52 + 176 + 164 + 176 + 164+x, -P), (52 + 176 + 164 + 176 + 164 + 176+x, -P)]
             loading = list(filter(lambda x: 0 <= x[0] < LBridge, loading))
             bridge.applied_loads = loading
             bridge.initialize()
             P1 = bridge.failure_force()
+            
+            if percentage_of_train != 0:
+                A = bridge.plot_annotated_bmd()
+                artists.append(A)
+                # plt.show()
             fail_loads.append(P1)
             # return P1/self.PTrain
+            # plt.gcf().canvas.draw_idle()
+        ani = animation.ArtistAnimation(plt.gcf(), artists, interval=50, blit=True,
+                                repeat_delay=1000)
+        plt.show()
         return min(fail_loads)/self.PTrain
 
 P = 400/6
 LBridge = 550 + 510 + 190+30
-loadings = [[(550, -P), (LBridge, -P)]]
+loadings = [[(550, -P), (1250, -P)]]
 LTrain = (52 + 176 + 164 + 176/2)*2
 # print(LTrain < LBridge)
 train_loadings = np.linspace(0, LBridge - LTrain)
@@ -542,12 +570,12 @@ A = CrossSection([1.27, 75 - 1.27*3, 1.27, 1.27], [80, 2*1.27, 20 + 2*1.27, 100]
 # A = CrossSection([1.27*2, 1.27, 75 - 1.27*6, 1.27, 1.27*2], [80, 2*1.27 + 20, 2*1.27, 2*1.27 + 20, 100], [0, 35-1.27/2, 40 - 1.27/2, 35-1.27/2, 0], [75 - 1.27*2, 1.27*2])
 
 # A = CrossSection([1.27, 1.27, HEIGHT - (3 + 2)*1.27, 1.27, 2*1.27], [LBot, 4*1.27 + 20, 4*1.27, 20 + 4*1.27, 100], [0, LBot/2 - 1.27 - 5 ,LBot/2-1.27,LBot/2-1.27 - 5, 0], [1.27, HEIGHT - 2*1.27])
-# B = CrossSection([1.27*3, 1.27, HEIGHT - (3 + 3)*1.27, 1.27, 1.27], [100, 20 + 4*1.27, 4*1.27, 20 + 4*1.27, 100], [0, 50 - 1.27 - 5, 50 - 1.27, 50 - 1.27 - 5, 0], [2*1.27, HEIGHT - 1.27])
+# B = CrossSection([1.27*2, 1.27, HEIGHT - (3 + 2)*1.27, 1.27, 1.27], [100, 20 + 4*1.27, 4*1.27, 20 + 4*1.27, 100], [0, 50 - 1.27 - 5, 50 - 1.27, 50 - 1.27 - 5, 0], [2*1.27, HEIGHT - 1.27])
 # A.draw()
 # print(A.get_Qy(Decimal(75 - 1.27)))
 # B.draw()
 C = CrossGroup([A], [(0, 1), (LBridge, 1)], [1], [0])
-# C = CrossGroup([A, B], [(0, 1), (LBridge, 1)], [1, 1], [0, 780])
+# C = CrossGroup([A, B], [(0, 1), (LBridge, 1)], [1, 1], list(range(1250, 10)))
 
 matboard = Material(4000, 30, -6, 4, 0.2, 2)
 # fail_loads = []
@@ -565,19 +593,20 @@ matboard = Material(4000, 30, -6, 4, 0.2, 2)
 # P = 400*percentage_of_train/6
 # loading = [(52+x, -P), (52 + 176+x, -P), (52 + 176 + 164+x, -P), (52 + 176 + 164 + 176+x, -P), (52 + 176 + 164 + 176 + 164+x, -P), (52 + 176 + 164 + 176 + 164 + 176+x, -P)]
 # loading = list(filter(lambda x: 0 <= x[0] < LBridge, loading))
-P = 200
-bridge_test = Bridge(C, LBridge, [(550, -P), (LBridge, -P)], [0, 550 + 510], matboard,  [0, 550, 550 + 510, LBridge])
-bridge_test.bridge_capacity()
+P = 193.3
+bridge_test = Bridge(C, LBridge, [(550, -P), (1250, -P)], [0, 550 + 510], matboard,  [0, 550, 550 + 510, LBridge])
+bridge_test.draw()
+# bridge_test.bridge_capacity()
 bridge_test.plot_annotated_sfd()
-plt.show()
-bridge_test.plot_annotated_bmd()
+# plt.show()
+# bridge_test.plot_bmd()
 plt.show()
 tester = BridgeTester(400)
 print('TRAIN FOS', tester.trainFOS(bridge_test))
 print('Failure Load (Case 2)', tester.get_failure_load(bridge_test))
 # bridge_test.plot_sfd()
 # plt.show()
-bridge_test.displacement()
+# bridge_test.displacement()
 # print(BridgeTester().get_failure_load(bridge_test))
 # print('Bending Moment Peaks: ', bridge_test.bmd()[1:-1])
 # bridge_test.draw()
