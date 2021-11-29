@@ -239,9 +239,9 @@ class Bridge :#Constant x thickness, non constant y thickness hollow member
 
     def plot_bmd (self ):
         BMD_plot =self .bmd ()
-        print(BMD_plot)
+        # print(BMD_plot)
         xdata ,ydata =zip (*BMD_plot )
-        plt .plot (xdata ,ydata )
+        plt .plot (xdata ,ydata, label='BMD')
         # plt .show ()
 
     def curvature (self ):
@@ -272,6 +272,7 @@ class Bridge :#Constant x thickness, non constant y thickness hollow member
             return Decimal ('0')<=idx <len (cur_cross .bases )
         mcrit =math .inf 
         for i in range (len (cur_cross .bases )):
+            # print(i)
             is_compressed =not ((cur_cross .starting [i ]>=cur_cross .ybar )^(self .get_moment (L )>Decimal ('0')))
             b ,l =cur_cross .bases [i ],cur_cross .lengths [i ]
             if not is_compressed :
@@ -285,23 +286,23 @@ class Bridge :#Constant x thickness, non constant y thickness hollow member
                 crit =None 
                 poss =list (filter (lambda x :cur_cross .xdisp [x ]!=Decimal ('0'),neighbours ))
                 if len (poss ) >Decimal ('0'):
-                    # print(poss)
-                # print('CASE 1 AND 2')
+                    # print('CASE 1 AND 2')
                     b2 =Decimal ('2')*cur_cross .xdisp [poss [0 ]]-cur_cross .bases [poss [0 ]]/Decimal ('2')#two held end
                     oneheld =(b -b2 -cur_cross .bases [poss [0 ]])/Decimal ('2')
                     twoheld =b2 
                     if oneheld < Decimal ('0') or twoheld < Decimal ('0'):
                         continue
-                     
+                    # print(twoheld, oneheld, l)
                     crit = math.inf if oneheld == 0 else Decimal ('0.425')*(l /(oneheld ))**Decimal ('2')*Decimal(math .pi)**Decimal ('2')*self .material .E /Decimal ('12')/(1 -self .material .u **Decimal ('2'))
                     crit2 =math.inf if twoheld == 0 else Decimal ('4')*(l /(twoheld ))**Decimal ('2')*Decimal(math .pi)**Decimal ('2')*self .material .E /Decimal ('12')/(1 -self .material .u **Decimal ('2'))
                     # print('POSS CRITS', crit, crit2)
                     crit =min (crit ,crit2 )
                 else :
-                # print('CASE 2')
+                    # print('CASE 2')
                     crit =Decimal ('0.425')*(l /b )**Decimal ('2')*Decimal(math .pi) **Decimal ('2')*self .material .E /Decimal ('12')/(1 -self .material .u **Decimal ('2'))
                     # print('POSS CRITS', crit)
                 mcrit =min (mcrit ,crit )
+        # print('PLATE', mcrit)
         return mcrit 
 
 
@@ -352,6 +353,9 @@ class Bridge :#Constant x thickness, non constant y thickness hollow member
     def plot_annotated_sfd(self):
         self.plot_sfd()
         xaxis, _ = zip(*self.sfd())
+        xaxis = list(xaxis)
+        xaxis += self.diaphragms + self.cross.starting
+        xaxis = sorted(xaxis)
         yaxes = [[] for _ in range(6)]
         labels = ['Matboard Shear Failure', 'Glue Shear Failure', 'Shear Buckling Failure']
         res = [None]*6
@@ -360,20 +364,59 @@ class Bridge :#Constant x thickness, non constant y thickness hollow member
         for x in xaxis:
             ys = []
             for V in self.max_shear_forces(x):
-                print(V)
+                # print(V)
                 ys.extend([V, -V])
+                
             yaxes = [a + [b] for a, b in zip(yaxes, ys)]
         for yax, labs in zip(yaxes, res):
-            plt.plot(xaxis, yax, label=labs)
+            net_loads = list(zip(xaxis, yax))
+            new_plot =[(net_loads [i ][0 ],net_loads [i -1 ][1 ])for i in range (1 ,len (net_loads ))]
+            interlaced = [None]*(len(net_loads) + len(new_plot))
+            interlaced[::2] = net_loads
+            interlaced[1::2] = new_plot
+            xax, yax = zip(*interlaced)
+            plt.plot(xax, yax, label=labs)
+            # plt.plot(xaxis, yax, label=labs)
         fix_legend(['SFD'] + res)
         plt.gca().legend()
-        pass
+        
+
+    def plot_annotated_bmd(self):
+        self.plot_bmd()
+        xaxis, _ = zip(*self.bmd())
+        xaxis = list(xaxis)
+        xaxis2, _ = zip(*self.sfd())
+        xaxis += xaxis2
+        xaxis += self.diaphragms + self.cross.starting
+        xaxis += list(map(Decimal, np.linspace(0, float(self.L), num=100)))
+        xaxis = sorted(xaxis)
+        yaxes = [[] for _ in range(3)]
+        res = ['Tension Failure', 'Compression Failure', 'Plate Buckling Failure']
+
+        for x in xaxis:
+            ys = []
+            for V, R in zip(self.max_bending_moments(x), res):
+                # print(f'MAX {R}', V)
+                ys.append(V)
+            yaxes = [a + [b] for a, b in zip(yaxes, ys)]
+        
+        for yax, labs in zip(yaxes, res):
+            net_loads = list(zip(xaxis, yax))
+            new_plot =[(net_loads [i ][0 ],net_loads [i -1 ][1 ])for i in range (1 ,len (net_loads ))]
+            interlaced = [None]*(len(net_loads) + len(new_plot))
+            interlaced[::2] = net_loads
+            interlaced[1::2] = new_plot
+            xax, yax = zip(*interlaced)
+            plt.plot(xax, yax, label=labs)
+        fix_legend(['BMD'] + res)
+        plt.gca().legend()
 
 
     def max_bending_moments(self, x, use_cross=False, idx=None):
         S = int(sign(self.get_moment(x)))
         cross = self.cross.crosses[idx] if use_cross else self.cross.get_cross(x)
         y_opts = [cross.ybar - sum(cross.lengths), cross.ybar]
+        # print(y_opts)
         maxes = []
         #tension failure
         y = y_opts[(S + 1)//2]
@@ -382,7 +425,7 @@ class Bridge :#Constant x thickness, non constant y thickness hollow member
         y = y_opts[(1 - S)//2]
         maxes.append(self.material.max_compression_stress*cross.I/y)
         #flexural buckling failure
-        maxes.append(self.plate_buckling(x)*cross.I/y)
+        maxes.append(min([self.plate_buckling(x)*cross.I/y1 for y1 in y_opts], key=abs))
         return maxes
 
     def bridge_capacity(self):
@@ -390,11 +433,11 @@ class Bridge :#Constant x thickness, non constant y thickness hollow member
         res1 = [self.max_shear_forces(test) for test in tests1]
         lowest_shear = reduce(lambda x, y: [a if abs(a) < abs(b) else b for a, b in zip(x, y)], res1)
 
-        tests2 = map(Decimal, np.linspace(0, float(self.L)))
+        tests2 = map(Decimal, np.linspace(0, float(self.L), num=100))
         res2 = [self.max_bending_moments(test) for test in tests2]
         lowest_moment = reduce(lambda x, y: [a if abs(a) < abs(b) else b for a, b in zip(x, y)], res2)
-        print('LOWEST SHEARS: ', lowest_shear)
-        print('LOWEST MOMENTS: ', lowest_moment)
+        print('LOWEST SHEARS: ', list(zip(['Matboard Shear Failure', 'Glue Shear Failure', 'Shear Buckling Failure'], lowest_shear)))
+        print('LOWEST MOMENTS: ', list(zip(['Tension Failure', 'Compression Failure', 'Plate Buckling Failure'], lowest_moment)))
         return lowest_shear, lowest_moment
     
     def failure_force_at_x (self, x):
@@ -453,7 +496,7 @@ class Bridge :#Constant x thickness, non constant y thickness hollow member
 class BridgeTester:
     def __init__(self, PTrain) -> None:
         self.PTrain = PTrain
-        pass
+        
     
     def get_failure_load(self, bridge):
         bridge.applied_loads = [(550, -1), (550 + 510 + 190, -1)]
@@ -527,12 +570,14 @@ bridge_test = Bridge(C, LBridge, [(550, -P), (LBridge, -P)], [0, 550 + 510], mat
 bridge_test.bridge_capacity()
 bridge_test.plot_annotated_sfd()
 plt.show()
+bridge_test.plot_annotated_bmd()
+plt.show()
 tester = BridgeTester(400)
 print('TRAIN FOS', tester.trainFOS(bridge_test))
 print('Failure Load (Case 2)', tester.get_failure_load(bridge_test))
 # bridge_test.plot_sfd()
 # plt.show()
-# bridge_test.displacement()
+bridge_test.displacement()
 # print(BridgeTester().get_failure_load(bridge_test))
 # print('Bending Moment Peaks: ', bridge_test.bmd()[1:-1])
 # bridge_test.draw()
