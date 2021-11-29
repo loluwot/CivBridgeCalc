@@ -26,16 +26,24 @@ def to_decimal(x):
         if len(x) == 0:
             return []
         if type(x[0]) == tuple:
-            return list(map(lambda v: (Decimal(v[0]), Decimal(v[1])), x))
+            return list(map(lambda v: (Decimal(str(v[0])), Decimal(str(v[1]))), x))
         elif type(x[0]) == int or type(x[0]) == float:
-            return list(map(Decimal, x))
+            return list(map(lambda v: Decimal(str(v)), x))
         else:
             return x
     elif type(x) == int or type(x) == float or type(x) == np.float64:
-        return Decimal(x)
+        return Decimal(str(x))
     # if type(x) != Decimal:
         # print(x, type(x))
     return x
+
+def fix_legend(names):
+    ax = plt.gca()
+    for i, p in enumerate(ax.get_lines()):    
+        if p.get_label() in names[:i]:    
+            idx = names.index(p.get_label())     
+            p.set_c(ax.get_lines()[idx].get_c())  
+            p.set_label('_' + p.get_label())  
 
 def get_ybar (bases ,lengths ):
     endings =list (accumulate (lengths ,lambda x ,y :x +y ))
@@ -45,7 +53,7 @@ def get_ybar (bases ,lengths ):
     return ybar 
 
 class Material :
-    def __init__ (self ,E ,max_tension_stress ,max_compression_stress ,max_shear_stress ,u )->None :
+    def __init__ (self ,E ,max_tension_stress ,max_compression_stress ,max_shear_stress ,u , max_glue_stress)->None :
         names = inspect.getfullargspec(self.__init__)[0]
         for name in names:
             if name == 'self':
@@ -97,10 +105,8 @@ class CrossSection :#assuming can be simplified to horizontally symmetric group 
         return sum ([a *(c -self .ybar )for a ,c in zip (new_section .areas ,new_section .centroids )])
 
     def get_shear_per_force (self ,y1 ):
-        idx =bisect_left (self .endings ,y1 )
-        # print (y1 ,self .endings ,self.bases[idx], self.get_Qy(y1))
-        # print (self .bases [idx ])
-        # print (self .get_Qy (y1 )/self .bases [idx ]/self .I )
+        idx = bisect_left (self .endings ,y1 )
+        # print(y1, self.endings, idx, self.bases[idx])
         return self .get_Qy (y1 )/self .bases [idx ]/self .I 
 
     def draw (self ):
@@ -138,11 +144,16 @@ class CrossGroup :
         self .changed_members =changed_members 
 
     def get_cross (self ,L ):
-        idx =bisect_left (self .starting ,L )-1 
+
+        idx = bisect_right (self .starting, L)-1 
         changed_member =self .changed_members [idx ]
         locs ,peaks =zip (*self .peaks )
-        idx2 =bisect_left (locs ,L )-1 
-        height =lerp (locs [idx2 ],peaks [idx2 ],locs [idx2 +1 ],peaks [idx2 +1 ],L )
+        idx2 =bisect_right (locs ,L )-1
+        # print(idx2, L, locs) 
+        if idx2 + 1 >= len(peaks):
+            height = peaks[idx2]
+        else:
+            height =lerp (locs [idx2 ],peaks [idx2 ],locs [idx2 +1 ],peaks [idx2 +1 ],L )
         # height = peaks[idx2] + (peaks[idx2 + 1] - peaks[idx2])*(L - locs[idx2])/(locs[idx2 + 1] - locs[idx2])
         cr1 =self .crosses [idx ].copy ()
         cr1 .lengths [changed_member ]=height *self .crosses [idx ].lengths [changed_member ]
@@ -156,13 +167,7 @@ class Bridge :#Constant x thickness, non constant y thickness hollow member
             if name == 'self':
                 continue
             setattr(self, name, to_decimal(locals()[name]))
-        # self.L = L 
-        # self.cross =cross 
-        # self.applied_loads = applied_loads #location, forces
-        # self.reaction_locs = reaction_locs 
-        # self.diaphragms = diaphragms 
         self.initialize()
-        # print (all_loads )
 
     def initialize(self):
         total_force = 1 if sum(list (map (lambda x :x [1 ], self .applied_loads ))) == 0 else sum(list (map (lambda x :x [1 ], self .applied_loads )))
@@ -189,7 +194,7 @@ class Bridge :#Constant x thickness, non constant y thickness hollow member
         interlaced =[(Decimal ('0'),0 )]+[tot [i % 2][i // 2]for i in range (len (new_plot )+len (net_loads ))]
         # print(interlaced)
         xdata ,ydata =zip (*interlaced )
-        plt .plot (xdata ,ydata , 'b')
+        plt .plot (xdata ,ydata , 'b', label='SFD')
         # plt .show ()
 
     def bmd (self ):
@@ -202,9 +207,11 @@ class Bridge :#Constant x thickness, non constant y thickness hollow member
         return bmd 
 
     def get_moment (self ,L ):
-        locs ,moments =zip (*self .bmd ())
-        idx =bisect_left (locs ,L )-1 
+        locs, moments =zip (*self .bmd ())
+        idx =bisect_right (locs ,L )-1 
         # print(locs, L, idx)
+        if idx + 1 >= len(locs):
+            return moments[idx]
         ans =lerp (locs [idx ],moments [idx ],locs [idx +1 ],moments [idx +1 ],L )
         # print('ANS', ans)
         return ans 
@@ -212,16 +219,16 @@ class Bridge :#Constant x thickness, non constant y thickness hollow member
 
     def get_shear(self, L):
         locs ,shears =zip (*self .sfd ())
-        print('shear ---------------', L)
+        # print('shear ---------------', L)
         
-        idx =bisect_left (locs ,L )-1 
-        print(shears[idx])
+        idx =bisect_right (locs ,L )-1 
+        # print(shears[idx])
         return shears[idx]
 
     def get_max_moment (self ,L0 ,L1 ):
         locs ,moments =zip (*self .bmd ())
-        idx1 =bisect_left (locs ,L0 )-1 
-        idx2 =bisect_left (locs ,L1 )-1 
+        idx1 =bisect_right (locs ,L0 )-1 
+        idx2 =bisect_right (locs ,L1 )-1 
         LL =[]
         if idx1 !=idx2 :
             LL =list (zip (moments [idx1 +1 :idx2 +1 ],locs [idx1 +1 :idx2 +1 ]))
@@ -232,6 +239,7 @@ class Bridge :#Constant x thickness, non constant y thickness hollow member
 
     def plot_bmd (self ):
         BMD_plot =self .bmd ()
+        print(BMD_plot)
         xdata ,ydata =zip (*BMD_plot )
         plt .plot (xdata ,ydata )
         # plt .show ()
@@ -251,7 +259,7 @@ class Bridge :#Constant x thickness, non constant y thickness hollow member
 
     def shear_stress (self ,y ,L ):
         locs ,forces =zip (*self .all_loads )
-        location =bisect_left (locs ,L )-1 
+        location =bisect_right (locs ,L )-1 
         # print(location, L, locs)
         nforces =list (accumulate (forces ,lambda x ,y :x +y ))
         V =nforces [location ]
@@ -269,9 +277,6 @@ class Bridge :#Constant x thickness, non constant y thickness hollow member
             if not is_compressed :
                 continue 
             if l >b :
-            # print('CASE 3')
-            # print('L', l)
-            # print('B', b)
                 crit =(b /Decimal ('2')/l )**Decimal ('2')*Decimal ('6')*Decimal(math .pi) **Decimal ('2')*self .material .E /Decimal ('12')/(1 -self .material .u **Decimal ('2'))
                 mcrit =min (mcrit ,crit )
                 # print('POSS CRIT', crit)
@@ -279,15 +284,17 @@ class Bridge :#Constant x thickness, non constant y thickness hollow member
                 neighbours =list (filter (isbounded ,[i -1 ,i +1 ]))
                 crit =None 
                 poss =list (filter (lambda x :cur_cross .xdisp [x ]!=Decimal ('0'),neighbours ))
-                if len (poss )>Decimal ('0'):
+                if len (poss ) >Decimal ('0'):
+                    # print(poss)
                 # print('CASE 1 AND 2')
                     b2 =Decimal ('2')*cur_cross .xdisp [poss [0 ]]-cur_cross .bases [poss [0 ]]/Decimal ('2')#two held end
                     oneheld =(b -b2 -cur_cross .bases [poss [0 ]])/Decimal ('2')
                     twoheld =b2 
-                    if oneheld <Decimal ('0')or twoheld <Decimal ('0'):
-                        continue 
-                    crit =Decimal ('0.425')*(l /(oneheld ))**Decimal ('2')*Decimal(math .pi)**Decimal ('2')*self .material .E /Decimal ('12')/(1 -self .material .u **Decimal ('2'))
-                    crit2 =Decimal ('4')*(l /(twoheld ))**Decimal ('2')*Decimal(math .pi)**Decimal ('2')*self .material .E /Decimal ('12')/(1 -self .material .u **Decimal ('2'))
+                    if oneheld < Decimal ('0') or twoheld < Decimal ('0'):
+                        continue
+                     
+                    crit = math.inf if oneheld == 0 else Decimal ('0.425')*(l /(oneheld ))**Decimal ('2')*Decimal(math .pi)**Decimal ('2')*self .material .E /Decimal ('12')/(1 -self .material .u **Decimal ('2'))
+                    crit2 =math.inf if twoheld == 0 else Decimal ('4')*(l /(twoheld ))**Decimal ('2')*Decimal(math .pi)**Decimal ('2')*self .material .E /Decimal ('12')/(1 -self .material .u **Decimal ('2'))
                     # print('POSS CRITS', crit, crit2)
                     crit =min (crit ,crit2 )
                 else :
@@ -300,8 +307,10 @@ class Bridge :#Constant x thickness, non constant y thickness hollow member
 
     def shear_buckling (self ,L ):
         cross =self .cross .get_cross (L )
-        min_shear =math .inf 
-        a =max (list (map (lambda i :self .diaphragms [i ]-self .diaphragms [i -1 ],range (1 ,len (self .diaphragms )))))
+        min_shear = Decimal(math .inf) 
+        # a = max (list (map (lambda i :self .diaphragms [i ]-self .diaphragms [i -1 ],range (1 ,len (self .diaphragms )))))
+        aidx = bisect_left(self.diaphragms, L) - 1
+        a = self.diaphragms[aidx+1] - self.diaphragms[aidx]
         # print('a', a)
         for b ,l ,x in zip (cross .bases ,cross .lengths ,cross .xdisp ):
             if x !=Decimal ('0'):
@@ -311,6 +320,7 @@ class Bridge :#Constant x thickness, non constant y thickness hollow member
                 # print ('B, L',b ,l )
                 min_shear =min (Decimal ('5')*Decimal(math .pi) **Decimal ('2')*self .material .E /Decimal ('12')/(1 -self .material .u **Decimal ('2'))*((b /l )**Decimal ('2')+(b /a )**Decimal ('2')),min_shear )
         return min_shear 
+
     def draw (self ):
         ax =plt .gca ()
         # print(self.cross.peaks)
@@ -325,76 +335,124 @@ class Bridge :#Constant x thickness, non constant y thickness hollow member
         plt .show ()
         pass 
         
-    def get_max_stresses(self, x):
-        maximumstresses = [self.material.max_compression_stress, self.material.max_tension_stress]
-        v1 = self.plate_buckling(x)
-        idx =int((sign(v1) + 1)//2)
-        maximumstresses[idx] = sign(v1)*min(abs(v1), abs(maximumstresses[idx]))
-        # print('MAX STRESSES', maximumstresses)
-        return maximumstresses
+    def max_shear_forces(self, x, use_cross=False, idx=None):
+        cross = self.cross.crosses[idx] if use_cross else self.cross.get_cross(x)
+        maxes = []
+        #matboard shear failure
+        # print('Max Qy:', cross.get_Qy(cross.ybar), 'Force: ', cross.get_shear_per_force(cross.ybar))
+        maxes.append(abs(self.material.max_shear_stress/cross.get_shear_per_force(cross.ybar)))
+        #glue shear failure
+        # print('Qy glue:', [cross.get_Qy(g) for g in cross.glue], 'Force: ', [cross.get_shear_per_force(g) for g in cross.glue])
+        maxes.append(min([abs(self.material.max_glue_stress/cross.get_shear_per_force(g)) for g in cross.glue]))
+        #shear buckling failure
+        # print(type(self.shear_buckling(x)), self.shear_buckling(x))
+        maxes.append(abs(self.shear_buckling(x)/cross.get_shear_per_force(cross.ybar)))
+        return maxes
+    
+    def plot_annotated_sfd(self):
+        self.plot_sfd()
+        xaxis, _ = zip(*self.sfd())
+        yaxes = [[] for _ in range(6)]
+        labels = ['Matboard Shear Failure', 'Glue Shear Failure', 'Shear Buckling Failure']
+        res = [None]*6
+        res[::2] = labels
+        res[1::2] = labels
+        for x in xaxis:
+            ys = []
+            for V in self.max_shear_forces(x):
+                print(V)
+                ys.extend([V, -V])
+            yaxes = [a + [b] for a, b in zip(yaxes, ys)]
+        for yax, labs in zip(yaxes, res):
+            plt.plot(xaxis, yax, label=labs)
+        fix_legend(['SFD'] + res)
+        plt.gca().legend()
+        pass
 
+
+    def max_bending_moments(self, x, use_cross=False, idx=None):
+        S = int(sign(self.get_moment(x)))
+        cross = self.cross.crosses[idx] if use_cross else self.cross.get_cross(x)
+        y_opts = [cross.ybar - sum(cross.lengths), cross.ybar]
+        maxes = []
+        #tension failure
+        y = y_opts[(S + 1)//2]
+        maxes.append(self.material.max_tension_stress*cross.I/y)
+        #compression failure
+        y = y_opts[(1 - S)//2]
+        maxes.append(self.material.max_compression_stress*cross.I/y)
+        #flexural buckling failure
+        maxes.append(self.plate_buckling(x)*cross.I/y)
+        return maxes
+
+    def bridge_capacity(self):
+        tests1 = set(self.diaphragms + self.cross.starting)
+        res1 = [self.max_shear_forces(test) for test in tests1]
+        lowest_shear = reduce(lambda x, y: [a if abs(a) < abs(b) else b for a, b in zip(x, y)], res1)
+
+        tests2 = map(Decimal, np.linspace(0, float(self.L)))
+        res2 = [self.max_bending_moments(test) for test in tests2]
+        lowest_moment = reduce(lambda x, y: [a if abs(a) < abs(b) else b for a, b in zip(x, y)], res2)
+        print('LOWEST SHEARS: ', lowest_shear)
+        print('LOWEST MOMENTS: ', lowest_moment)
+        return lowest_shear, lowest_moment
+    
     def failure_force_at_x (self, x):
-        print('X', x)
-        bottom = self.flex_stress(0, x)
-        top = self.flex_stress(sum(self.cross.get_cross(x).lengths), x)
-        stresses = [bottom, top]
-        max_stresses = self.get_max_stresses(x)
-        # print('MAX STRESSES----------', max_stresses)
-        stresses = sorted(stresses)
-        # print('STRESSES', stresses)
-        max_glue_stress = list(map(lambda g: self.shear_stress(g, x), self.cross.get_cross(x).glue))
-        # print('GLUE', list(map(lambda x: math.inf if x == 0 else 2/x, max_glue_stress)))
-        max_shear_stress = [self.shear_stress(self.cross.get_cross(x).ybar, x)]
-        # stresslimit = max(list(map(lambda x, y: math.inf if x == 0 else y/x, stresses, max_stresses)))
-        # shearstresslimit = max(list(map(lambda x: math.inf if x == 0 else 2/x, max_glue_stress)) + list(map(lambda x: math.inf if x == 0 else min(self.material.max_shear_stress, self.shear_buckling(x)), max_shear_stress)))
-        megalist = list(map(lambda x, y: math.inf if x == 0 else y/x, stresses, max_stresses)) + list(map(lambda v: math.inf if v == 0 else 2/v/self.get_shear(x), max_glue_stress)) + list(map(lambda v: math.inf if v== 0 else min(self.material.max_shear_stress, self.shear_buckling(x))/v/self.get_shear(x), max_shear_stress))
-        megalist = list(map(abs, megalist))
-        # print('MEGA LIST OF FORCES', megalist)
-        return min(megalist), megalist
-        # return min(stresslimit, shearstresslimit)
+        # print('X', x)
+        shearP = math.inf if self.get_shear(x) == 0 else min(self.max_shear_forces(x))/abs(self.get_shear(x))
+        M1 = self.get_moment(x)
+        # possible_BM = list(map(abs, filter(lambda V: sign(V) == sign(M1), self.max_bending_moments(x))))
+        # print(M1)
+        momentP = math.inf if M1 == 0 else sign(M1)*min(map(abs, filter(lambda V: sign(V) == sign(M1), self.max_bending_moments(x))))/M1
+        # print('SHEAR ----', shearP, 'MOMENT', momentP)
+        
+        return min(shearP, momentP)
 
     def failure_force (self):
-        test_points = list(map(Decimal, np.linspace(0, float(self.L))))
+        test_points = set([v[0] for v in self.sfd()] + [v[0] for v in self.bmd()] + self.cross.starting + self.diaphragms)
+        # test_points = map(Decimal, np.linspace(0, float(self.L), num=200))
         all_fails = list(map(self.failure_force_at_x, test_points))
-        _, all_fails_l = zip(*all_fails)
+        # print(min(all_fails))
+        return min(all_fails)
         # print('l', all_fails_l)
-        print('WORST FAILS', list(reduce(lambda x, y: [min(a, b) for a, b in zip(x, y)], all_fails_l)))
-        return min(all_fails)[0]
+        #         return min(all_fails)[0]
         # return 
 
     def displacement (self):
-        # self.plot_sfd()
-        # plt.show()
         SS = self.sfd() + [(self.L, 0)]
+        # print(SS)
         z = Symbol('z')
         defs = [(SS[i][1], (z >= SS[i][0]) & (z < SS[i+1][0])) for i in range(len(SS) - 1)] + [(0, True)]
         p = Piecewise(*defs)
         cross_sections = [(self.cross.crosses[i].I*self.material.E, (z >= self.cross.starting[i]) & (z < (self.cross.starting[i + 1] if i + 1 < len(self.cross.starting) else self.L))) for i in range(len(self.cross.starting))] + [(1, True)]
-        print(cross_sections)
+        # print(cross_sections)
         cross_sections = Piecewise(*cross_sections)
-        print(p)
-        print(cross_sections)
+        # print(p)
+        # print(cross_sections)
+        plot(p, (z, 0, self.L), show=True)
         BMD = integrate(p, (z, 0, z))
         BMD = BMD - BMD.subs(z, self.L)
+        plot(BMD, (z, 0, self.L), show=True)
+        # self.plot_bmd()
+        # plt.show()
         curvature = BMD/cross_sections
-        print(curvature)
+        plot(curvature, (z, 0, self.L), show=True)
         slopes = integrate(curvature, (z, 0, z))
         disp = integrate(slopes, (z, 0, z))
-        
         # print(disp)
         y1 = disp.subs(z, self.reaction_locs[0])
         y2 = disp.subs(z, self.reaction_locs[1])
         m = (y2 - y1)/(self.reaction_locs[1] - self.reaction_locs[0])
-        disp = disp - (m*(z -self.reaction_locs[0]) + y1)
-        print(disp)
+        disp = disp - (m*(z-self.reaction_locs[0]) + y1)
+        # print(disp.subs(z, 1250/2))
         plot(disp, (z, 0, self.L), show=True)
-        # print(disp.subs(z, self.reaction_locs[1]))
-        # print(integrate(integrate(integrate(p, (z, 0, z)), (z, 0, z)), (z, 0, z)))
-
+        return disp
+        
 
 
 class BridgeTester:
-    def __init__(self) -> None:
+    def __init__(self, PTrain) -> None:
+        self.PTrain = PTrain
         pass
     
     def get_failure_load(self, bridge):
@@ -402,10 +460,10 @@ class BridgeTester:
         bridge.initialize()
         return bridge.failure_force()
     
-    def get_train_failure(self, bridge):
+    def trainFOS(self, bridge):
         LBridge = bridge.L
         LTrain = Decimal((52 + 176 + 164 + 176/2)*2)
-        train_loadings = list(map(Decimal, np.linspace(-float(LTrain), float(LBridge))))
+        train_loadings = list(map(Decimal, np.linspace(-float(LTrain), float(LBridge), num=200)))
         fail_loads = []
         for x in (train_loadings):
             # print(x)
@@ -416,13 +474,15 @@ class BridgeTester:
             elif percentage_of_train < a:
                 percentage_of_train = 0
             # print(percentage_of_train)
-            P = Decimal(1/6)
+            P = Decimal('0.1666667')
             loading = [(52+x, -P), (52 + 176+x, -P), (52 + 176 + 164+x, -P), (52 + 176 + 164 + 176+x, -P), (52 + 176 + 164 + 176 + 164+x, -P), (52 + 176 + 164 + 176 + 164 + 176+x, -P)]
             loading = list(filter(lambda x: 0 <= x[0] < LBridge, loading))
             bridge.applied_loads = loading
             bridge.initialize()
-            fail_loads.append(bridge_test.failure_force())
-        return min(fail_loads)
+            P1 = bridge.failure_force()
+            fail_loads.append(P1)
+            # return P1/self.PTrain
+        return min(fail_loads)/self.PTrain
 
 P = 400/6
 LBridge = 550 + 510 + 190+30
@@ -435,7 +495,9 @@ total_loadings = loadings + train_loadings
 LBot = 50
 N = 3
 HEIGHT = 65
-A = CrossSection([1.27, 75 - 1.27*3,1.27, 1.27], [80, 2*1.27, 20 + 2*1.27, 100], [0, 40-1.27/2, 35 - 1.27/2, 0], [75 - 1.28])
+A = CrossSection([1.27, 75 - 1.27*3, 1.27, 1.27], [80, 2*1.27, 20 + 2*1.27, 100], [0, 40-1.27/2, 35 - 1.27/2, 0], [75 - 1.27])
+# A = CrossSection([1.27*2, 1.27, 75 - 1.27*6, 1.27, 1.27*2], [80, 2*1.27 + 20, 2*1.27, 2*1.27 + 20, 100], [0, 35-1.27/2, 40 - 1.27/2, 35-1.27/2, 0], [75 - 1.27*2, 1.27*2])
+
 # A = CrossSection([1.27, 1.27, HEIGHT - (3 + 2)*1.27, 1.27, 2*1.27], [LBot, 4*1.27 + 20, 4*1.27, 20 + 4*1.27, 100], [0, LBot/2 - 1.27 - 5 ,LBot/2-1.27,LBot/2-1.27 - 5, 0], [1.27, HEIGHT - 2*1.27])
 # B = CrossSection([1.27*3, 1.27, HEIGHT - (3 + 3)*1.27, 1.27, 1.27], [100, 20 + 4*1.27, 4*1.27, 20 + 4*1.27, 100], [0, 50 - 1.27 - 5, 50 - 1.27, 50 - 1.27 - 5, 0], [2*1.27, HEIGHT - 1.27])
 # A.draw()
@@ -444,7 +506,7 @@ A = CrossSection([1.27, 75 - 1.27*3,1.27, 1.27], [80, 2*1.27, 20 + 2*1.27, 100],
 C = CrossGroup([A], [(0, 1), (LBridge, 1)], [1], [0])
 # C = CrossGroup([A, B], [(0, 1), (LBridge, 1)], [1, 1], [0, 780])
 
-matboard = Material(4000, 30, -6, 4, 0.2)
+matboard = Material(4000, 30, -6, 4, 0.2, 2)
 # fail_loads = []
 # train_loadings = np.linspace(-LTrain, LBridge, num=50)
 # for x in (train_loadings):
@@ -460,12 +522,17 @@ matboard = Material(4000, 30, -6, 4, 0.2)
 # P = 400*percentage_of_train/6
 # loading = [(52+x, -P), (52 + 176+x, -P), (52 + 176 + 164+x, -P), (52 + 176 + 164 + 176+x, -P), (52 + 176 + 164 + 176 + 164+x, -P), (52 + 176 + 164 + 176 + 164 + 176+x, -P)]
 # loading = list(filter(lambda x: 0 <= x[0] < LBridge, loading))
-
+P = 200
 bridge_test = Bridge(C, LBridge, [(550, -P), (LBridge, -P)], [0, 550 + 510], matboard,  [0, 550, 550 + 510, LBridge])
-# print(BridgeTester().get_train_failure(bridge_test))
+bridge_test.bridge_capacity()
+bridge_test.plot_annotated_sfd()
+plt.show()
+tester = BridgeTester(400)
+print('TRAIN FOS', tester.trainFOS(bridge_test))
+print('Failure Load (Case 2)', tester.get_failure_load(bridge_test))
 # bridge_test.plot_sfd()
 # plt.show()
-bridge_test.displacement()
+# bridge_test.displacement()
 # print(BridgeTester().get_failure_load(bridge_test))
 # print('Bending Moment Peaks: ', bridge_test.bmd()[1:-1])
 # bridge_test.draw()
