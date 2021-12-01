@@ -302,8 +302,7 @@ class Bridge :#Constant x thickness, non constant y thickness hollow member
                     # print('CASE 2')
                     crit =Decimal ('0.425')*(l /b )**Decimal ('2')*Decimal(math .pi) **Decimal ('2')*self .material .E /Decimal ('12')/(1 -self .material .u **Decimal ('2'))
                     # print('POSS CRITS', crit)
-                mcrit =min (mcrit ,crit )
-        # print('PLATE', mcrit)
+                mcrit =min (mcrit ,crit )        
         return mcrit 
 
 
@@ -311,9 +310,14 @@ class Bridge :#Constant x thickness, non constant y thickness hollow member
         cross =self .cross .get_cross (L )
         min_shear = Decimal(math .inf) 
         # a = max (list (map (lambda i :self .diaphragms [i ]-self .diaphragms [i -1 ],range (1 ,len (self .diaphragms )))))
-        aidx = bisect_left(self.diaphragms, L) - 1
-        a = self.diaphragms[aidx+1] - self.diaphragms[aidx]
-        # print('a', a)
+        aidx = bisect_right(self.diaphragms, L) - 1
+        if aidx+1 >= len(self.diaphragms):
+            a = self.L - self.diaphragms[aidx]
+        elif aidx < 0:
+            a = self.diaphragms[aidx+1]
+        else:
+            a = self.diaphragms[aidx+1] - self.diaphragms[aidx]
+        print('A', a, aidx)
         for b ,l ,x in zip (cross .bases ,cross .lengths ,cross .xdisp ):
             if x !=Decimal ('0'):
                 # print ('B, L',b /Decimal ('2'),l )
@@ -340,9 +344,11 @@ class Bridge :#Constant x thickness, non constant y thickness hollow member
     def max_shear_forces(self, x, use_cross=False, idx=None):
         cross = self.cross.crosses[idx] if use_cross else self.cross.get_cross(x)
         maxes = []
-        #matboard shear failure
+        # matboard shear failure
         # print('Max Qy:', cross.get_Qy(cross.ybar), 'Force: ', cross.get_shear_per_force(cross.ybar))
         maxes.append(abs(self.material.max_shear_stress/cross.get_shear_per_force(cross.ybar)))
+
+        # print('Max', maxes[-1])
         #glue shear failure
         # print('Qy glue:', [cross.get_Qy(g) for g in cross.glue], 'Force: ', [cross.get_shear_per_force(g) for g in cross.glue])
         maxes.append(min([abs(self.material.max_glue_stress/cross.get_shear_per_force(g)) for g in cross.glue]))
@@ -386,6 +392,7 @@ class Bridge :#Constant x thickness, non constant y thickness hollow member
 
     def plot_annotated_bmd(self):
         artists = [self.plot_bmd()]
+        # print(self.bmd())
         xaxis, _ = zip(*self.bmd())
         xaxis = list(xaxis)
         xaxis2, _ = zip(*self.sfd())
@@ -422,6 +429,8 @@ class Bridge :#Constant x thickness, non constant y thickness hollow member
     def max_bending_moments(self, x, use_cross=False, idx=None):
         S = int(sign(self.get_moment(x)))
         # print(S)
+        if S == 0:
+            return [Decimal(math.inf) for _ in range(3)]
         cross = self.cross.crosses[idx] if use_cross else self.cross.get_cross(x)
         y_opts = [cross.ybar - sum(cross.lengths), cross.ybar]
         # print(y_opts)
@@ -437,54 +446,68 @@ class Bridge :#Constant x thickness, non constant y thickness hollow member
         
         #flexural buckling failure
         maxes.append(-self.plate_buckling(x)*cross.I/y)
+        if abs(maxes[-1])//10000 == 4:
+            print(S)
+            print(self.plate_buckling(x), cross.I, y, maxes[-1])
         # print('MOMENTS', maxes)
         return maxes
 
     def bridge_capacity(self):
         tests1 = set(self.diaphragms + self.cross.starting)
         res1 = [self.max_shear_forces(test) for test in tests1]
-        lowest_shear = reduce(lambda x, y: [a if abs(a) < abs(b) else b for a, b in zip(x, y)], res1)
-
+        def reduce_mins(res1):
+            return reduce(lambda x, y: [a if abs(a) < abs(b) else b for a, b in zip(x, y)], res1)
+        lowest_shear = reduce_mins(res1)
         tests2 = map(Decimal, np.linspace(0, float(self.L), num=100))
         res2 = [self.max_bending_moments(test) for test in tests2]
         lowest_moment = reduce(lambda x, y: [a if abs(a) < abs(b) else b for a, b in zip(x, y)], res2)
-        print('LOWEST SHEARS: ', list(zip(['Matboard Shear Failure', 'Glue Shear Failure', 'Shear Buckling Failure'], lowest_shear)))
-        print('LOWEST MOMENTS: ', list(zip(['Tension Failure', 'Compression Failure', 'Plate Buckling Failure'], lowest_moment)))
-        return lowest_shear, lowest_moment
+        lowest_moment_pos = reduce_mins(map(lambda x: [math.inf if v < 0 else v for v in x], res2))
+        lowest_moment_neg = reduce_mins(map(lambda x: [math.inf if v >= 0 else v for v in x], res2))
+        print('Shear Failures:')
+        print('\n'.join(list(map(lambda x, y: f'{x}: {y} N', ['Matboard Shear Failure', 'Glue Shear Failure', 'Shear Buckling Failure'], lowest_shear))))
+        print('Moment Failures:')
+        print('\n'.join(list(map(lambda x, y: f'{x} (Positive): {y} Nmm', ['Tension Failure', 'Compression Failure', 'Plate Buckling Failure'], lowest_moment_pos))))
+        print('\n'.join(list(map(lambda x, y: f'{x} (Negative): {y} Nmm', ['Tension Failure', 'Compression Failure', 'Plate Buckling Failure'], lowest_moment_neg))))
+        return lowest_shear, lowest_moment_pos, lowest_moment_neg
     
     def failure_force_at_x (self, x):
         # print('X', x)
-        shearP = math.inf if self.get_shear(x) == 0 else min(self.max_shear_forces(x))/abs(self.get_shear(x))
+        SFs = self.max_shear_forces(x)
+        BMs = self.max_bending_moments(x)
+        shearP = math.inf if self.get_shear(x) == 0 else min(SFs)/abs(self.get_shear(x))
         M1 = self.get_moment(x)
         # possible_BM = list(map(abs, filter(lambda V: sign(V) == sign(M1), self.max_bending_moments(x))))
         # print(M1)
-        momentP = math.inf if M1 == 0 else sign(M1)*min(map(abs, filter(lambda V: sign(V) == sign(M1), self.max_bending_moments(x))))/M1
+        momentP = math.inf if M1 == 0 else sign(M1)*min(map(abs, filter(lambda V: sign(V) == sign(M1), BMs)))/M1
+        # print(momentP)
         # print('SHEAR ----', shearP, 'MOMENT', momentP)
         
-        return min(abs(shearP), abs(momentP))
+        return min(abs(shearP), abs(momentP)), shearP, momentP, SFs.index(min(SFs)), BMs.index(min(BMs))
 
     def failure_force (self):
         test_points = list(set([v[0] for v in self.sfd()] + [v[0] for v in self.bmd()] + self.cross.starting + self.diaphragms))
-        test_points += list(map(Decimal, np.linspace(0, float(self.L), num=200)))
+        test_points += list(map(Decimal, np.linspace(0, float(self.L), num=50)))
         test_points = sorted(test_points)
         all_fails = list(map(self.failure_force_at_x, test_points))
         # plt.plot(test_points, all_fails)
         # plt.show()
         # print(all_fails)
         # self.plot_bmd()
-        return min(all_fails)
+        # print(min(all_fails))
+        return min(all_fails)[0]
         # print('l', all_fails_l)
         #         return min(all_fails)[0]
         # return 
 
     def displacement (self):
         SS = self.sfd() + [(self.L, 0)]
-        # print(SS)
+        print(SS)
         z = Symbol('z')
         defs = [(SS[i][1], (z >= SS[i][0]) & (z < SS[i+1][0])) for i in range(len(SS) - 1)] + [(0, True)]
         p = Piecewise(*defs)
+        print(self.cross.starting)
         cross_sections = [(self.cross.crosses[i].I*self.material.E, (z >= self.cross.starting[i]) & (z < (self.cross.starting[i + 1] if i + 1 < len(self.cross.starting) else self.L))) for i in range(len(self.cross.starting))] + [(1, True)]
-        # print(cross_sections)
+        print(cross_sections)
         cross_sections = Piecewise(*cross_sections)
         # print(p)
         # print(cross_sections)
@@ -497,14 +520,15 @@ class Bridge :#Constant x thickness, non constant y thickness hollow member
         curvature = BMD/cross_sections
         plot(curvature, (z, 0, self.L), show=True)
         slopes = integrate(curvature, (z, 0, z))
+        print(slopes)
         disp = integrate(slopes, (z, 0, z))
-        # print(disp)
+        print(disp)
         y1 = disp.subs(z, self.reaction_locs[0])
         y2 = disp.subs(z, self.reaction_locs[1])
         m = (y2 - y1)/(self.reaction_locs[1] - self.reaction_locs[0])
         disp = disp - (m*(z-self.reaction_locs[0]) + y1)
-        # print(disp.subs(z, 1250/2))
-        plot(disp, (z, 0, self.L), show=True)
+        print(disp.subs(z, 1250/2))
+        plot(disp, (z, 0, self.L), show=True, xlabel='Location of Bridge (mm)', ylabel='Displacement (mm)')
         return disp
         
 
@@ -541,6 +565,7 @@ class BridgeTester:
             loading = list(filter(lambda x: 0 <= x[0] < LBridge, loading))
             bridge.applied_loads = loading
             bridge.initialize()
+            # print(bridge.bmd())
             P1 = bridge.failure_force()
             
             if percentage_of_train != 0:
@@ -565,17 +590,17 @@ train_loadings = list(map(lambda x: [(52+x, -P), (52 + 176+x, -P), (52 + 176 + 1
 total_loadings = loadings + train_loadings
 LBot = 50
 N = 3
-HEIGHT = 65
-A = CrossSection([1.27, 75 - 1.27*3, 1.27, 1.27], [80, 2*1.27, 20 + 2*1.27, 100], [0, 40-1.27/2, 35 - 1.27/2, 0], [75 - 1.27])
+HEIGHT = 70
+# A = CrossSection([1.27, 75 - 1.27*3, 1.27, 1.27], [80, 2*1.27, 20 + 2*1.27, 100], [0, 40-1.27/2, 35 - 1.27/2, 0], [75 - 1.27])
 # A = CrossSection([1.27*2, 1.27, 75 - 1.27*6, 1.27, 1.27*2], [80, 2*1.27 + 20, 2*1.27, 2*1.27 + 20, 100], [0, 35-1.27/2, 40 - 1.27/2, 35-1.27/2, 0], [75 - 1.27*2, 1.27*2])
 
-# A = CrossSection([1.27, 1.27, HEIGHT - (3 + 2)*1.27, 1.27, 2*1.27], [LBot, 4*1.27 + 20, 4*1.27, 20 + 4*1.27, 100], [0, LBot/2 - 1.27 - 5 ,LBot/2-1.27,LBot/2-1.27 - 5, 0], [1.27, HEIGHT - 2*1.27])
-# B = CrossSection([1.27*2, 1.27, HEIGHT - (3 + 2)*1.27, 1.27, 1.27], [100, 20 + 4*1.27, 4*1.27, 20 + 4*1.27, 100], [0, 50 - 1.27 - 5, 50 - 1.27, 50 - 1.27 - 5, 0], [2*1.27, HEIGHT - 1.27])
+A = CrossSection([1.27, 1.27, HEIGHT - (3 + 2)*1.27, 1.27, 2*1.27], [LBot, 4*1.27 + 20, 4*1.27, 20 + 4*1.27, 100], [0, LBot/2 - 1.27 - 5 ,LBot/2-1.27,LBot/2-1.27 - 5, 0], [1.27, HEIGHT - 2*1.27])
+B = CrossSection([1.27*2, 1.27, HEIGHT - (3 + 2)*1.27, 1.27, 1.27], [100, 20 + 4*1.27, 4*1.27, 20 + 4*1.27, 100], [0, 50 - 1.27 - 5, 50 - 1.27, 50 - 1.27 - 5, 0], [2*1.27, HEIGHT - 1.27])
 # A.draw()
 # print(A.get_Qy(Decimal(75 - 1.27)))
 # B.draw()
-C = CrossGroup([A], [(0, 1), (LBridge, 1)], [1], [0])
-# C = CrossGroup([A, B], [(0, 1), (LBridge, 1)], [1, 1], list(range(1250, 10)))
+# C = CrossGroup([A], [(0, 1), (LBridge, 1)], [1], [0])
+C = CrossGroup([A, B], [(0, 1), (LBridge, 1)], [1, 1], [0, 780])
 
 matboard = Material(4000, 30, -6, 4, 0.2, 2)
 # fail_loads = []
@@ -593,20 +618,28 @@ matboard = Material(4000, 30, -6, 4, 0.2, 2)
 # P = 400*percentage_of_train/6
 # loading = [(52+x, -P), (52 + 176+x, -P), (52 + 176 + 164+x, -P), (52 + 176 + 164 + 176+x, -P), (52 + 176 + 164 + 176 + 164+x, -P), (52 + 176 + 164 + 176 + 164 + 176+x, -P)]
 # loading = list(filter(lambda x: 0 <= x[0] < LBridge, loading))
-P = 193.3
-bridge_test = Bridge(C, LBridge, [(550, -P), (1250, -P)], [0, 550 + 510], matboard,  [0, 550, 550 + 510, LBridge])
-bridge_test.draw()
-# bridge_test.bridge_capacity()
+P = 100
+# bridge_test = Bridge(C, LBridge, [(550, -P), (1250, -P)], [0, 550 + 510], matboard, [0, 550, 550 + 510, 550 + 510 + 190])
+diaphragm_lengths = [15] + [115]*4 + [75] + [170]*3 + [190] + [15]
+diaphragms1 = list(accumulate(diaphragm_lengths, lambda x, y: x + y))
+# print(diaphragms1)
+bridge_test = Bridge(C, LBridge, [(550, -P), (1250, -P)], [0, 550 + 510], matboard, diaphragms1)
+# bridge_test.draw()
+# bridge_test.displacement()
+
+bridge_test.bridge_capacity()
+# bridge_test.plot_annotated_sfd()
+bridge_test.plot_annotated_bmd()
+plt.show()
 bridge_test.plot_annotated_sfd()
-# plt.show()
 # bridge_test.plot_bmd()
 plt.show()
+bridge_test.displacement()
 tester = BridgeTester(400)
 print('TRAIN FOS', tester.trainFOS(bridge_test))
 print('Failure Load (Case 2)', tester.get_failure_load(bridge_test))
 # bridge_test.plot_sfd()
 # plt.show()
-# bridge_test.displacement()
 # print(BridgeTester().get_failure_load(bridge_test))
 # print('Bending Moment Peaks: ', bridge_test.bmd()[1:-1])
 # bridge_test.draw()
